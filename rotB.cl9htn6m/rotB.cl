@@ -57,10 +57,7 @@ void Deriv(__global float3* X, uchar d, uchar m, __global float3* Y)
     }
 }
 
-__kernel void flush(__global float* X, uchar idx)
-{    
-    X[idx] = (float)(0);    
-}
+
 
 __kernel void Flush(__global float3* X)
 {
@@ -210,9 +207,9 @@ __kernel void rotB(__global float3* X, __global float3* J, __global float3* B, _
     
     
     
-    //F[idx].x += 10.*dDet_dX[0]/(Det_dX*Det_dX);
-    //F[idx].y += 10.*dDet_dX[1]/(Det_dX*Det_dX);
-    //F[idx].z += 10.*dDet_dX[2]/(Det_dX*Det_dX);
+    //F[idx].x += dDet_dX[0]/(Det_dX*Det_dX);
+    //F[idx].y += dDet_dX[1]/(Det_dX*Det_dX);
+    //F[idx].z += dDet_dX[2]/(Det_dX*Det_dX);
 }
 
 
@@ -248,19 +245,18 @@ __kernel void Update(__global float3* X, __global float3* Y, __global float* par
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
     if (params[1] < 1.f) {
-        if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
-            X[idx] = Y[idx];   
-        }
+        //if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
+        X[idx] = Y[idx];   
+        //}
     }
+    
+    
+    params[0] /= pow(params[1], 0.1f);
+    params[1] = 0.f;
     
 }
 
-__kernel void AdjustParams(__global float* params)
-{
-    params[0]/= pow(params[1], 0.1f)+0.5;
-    
-    params[1] = 0.f;
-}
+
 
 __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, __global float* params)
 {
@@ -274,15 +270,9 @@ __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, 
 
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
-    float err;
-    
-    err = ((X[idx].x+F[idx].x-Y[idx].x)*(X[idx].x+F[idx].x-Y[idx].x) + 
+    params[1] += ((X[idx].x+F[idx].x-Y[idx].x)*(X[idx].x+F[idx].x-Y[idx].x) + 
                  (X[idx].y+F[idx].y-Y[idx].y)*(X[idx].y+F[idx].y-Y[idx].y) + 
-                 (X[idx].z+F[idx].z-Y[idx].z)*(X[idx].z+F[idx].z-Y[idx].z))/(params[2]*params[2]);
-    
-    if (err > params[1]) { 
-        params[1] = err;
-    }
+                 (X[idx].z+F[idx].z-Y[idx].z)*(X[idx].z+F[idx].z-Y[idx].z))/(params[2]*params[2])/(float)(nx*ny*nz);
     
     
 }

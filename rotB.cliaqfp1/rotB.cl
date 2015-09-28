@@ -210,9 +210,9 @@ __kernel void rotB(__global float3* X, __global float3* J, __global float3* B, _
     
     
     
-    //F[idx].x += 10.*dDet_dX[0]/(Det_dX*Det_dX);
-    //F[idx].y += 10.*dDet_dX[1]/(Det_dX*Det_dX);
-    //F[idx].z += 10.*dDet_dX[2]/(Det_dX*Det_dX);
+    //F[idx].x += dDet_dX[0]/(Det_dX*Det_dX);
+    //F[idx].y += dDet_dX[1]/(Det_dX*Det_dX);
+    //F[idx].z += dDet_dX[2]/(Det_dX*Det_dX);
 }
 
 
@@ -257,9 +257,8 @@ __kernel void Update(__global float3* X, __global float3* Y, __global float* par
 
 __kernel void AdjustParams(__global float* params)
 {
-    params[0]/= pow(params[1], 0.1f)+0.5;
-    
-    params[1] = 0.f;
+        params[0]/= pow(params[1], 0.1f);
+        params[1] = 0.f;
 }
 
 __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, __global float* params)
