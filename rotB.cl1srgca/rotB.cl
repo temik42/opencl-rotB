@@ -210,7 +210,6 @@ __kernel void Step(__global float3* X, __global float3* F, __global float* param
 
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
-//    if ((iz != 0) && (iz != (nz-1))) {    
     if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
         X[idx] += F[idx]*(float3)(params[0]*coeff);
     }
@@ -231,7 +230,9 @@ __kernel void Update(__global float3* X, __global float3* Y, __global float* par
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
     if (params[1] < 1.f) {
-        X[idx] = Y[idx];   
+        if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
+            X[idx] = Y[idx];   
+        }
     }
     
 }

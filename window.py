@@ -1,3 +1,6 @@
+import cv2
+import numpy as np
+
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
@@ -7,23 +10,30 @@ import numpy as np
 import glutil
 from vector import Vec
 
+import matplotlib.pyplot as plt
+
 import pyopencl as cl
 import rotB
 
 class window():
-    def __init__(self, X, B, step = 0.05, scale = 1e-4):
+    def __init__(self, X, B, step = 0.05, scale = 1e-4, capture = False):
         self.shape = X.shape[0:3]
-        
+     
         #mouse handling for transforming scene
         self.mouse_down = False
         self.mouse_old = Vec([0., 0.])
         self.rotate = Vec([0., 0., 0.])
         self.translate = Vec([0., 0., 0.])
-        self.initrans = Vec([0., 0., -self.shape[2]*3])
+        self.initrans = Vec([0., 0., -self.shape[2]/2])
 
-        self.width = 1000
-        self.height = 1000
-
+        self.width = 800
+        self.height = 800
+        
+        self.capture = capture
+        if self.capture:
+            self.video = cv2.VideoWriter('video.avi',-1,30,(self.width,self.height))
+            self.pbyData = np.zeros((self.width,self.height,3), dtype = np.ubyte)
+        
         glutInit(sys.argv)
         glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)
         glutInitWindowSize(self.width, self.height)
@@ -47,7 +57,8 @@ class window():
         
         self.cle = rotB.CL(X, B, step = step, scale = scale, gl_enable = True)
         self.cle.start()
-        self.loadData()      
+        self.loadData()  
+        
         glutMainLoop()
 
     
@@ -68,6 +79,11 @@ class window():
         ESCAPE = '\033'
         if args[0] == ESCAPE or args[0] == 'q':
             sys.exit()
+            
+        if (args[0] == 's') and (self.capture):
+            self.capture = False
+            self.video.release()
+            
         elif args[0] == 't':
             print self.cle.timings
 
@@ -91,11 +107,11 @@ class window():
             self.translate.z -= dy * .1 
         self.mouse_old.x = x
         self.mouse_old.y = y
-    ###END GL CALLBACKS
-    
+    ###END GL CALLBACKS    
     
     def render(self):
         
+        glLineWidth(2)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE)
 
@@ -120,19 +136,14 @@ class window():
         glDisableClientState(GL_VERTEX_ARRAY)
 
         glDisable(GL_BLEND)
-
+        
     def draw(self):
         """Render the particles"""        
 
         cl.enqueue_acquire_gl_objects(self.cle.queue, self.gl_objects)
         self.cle.program.Copy(self.cle.queue, self.shape, None, self.cle.X, self.X)
-        cl.enqueue_release_gl_objects(self.cle.queue, self.gl_objects)
-        
-                    
-        #step = np.zeros((3,), dtype = np.float32)
-        #cl.enqueue_read_buffer(self.cle.queue, self.cle.params, step).wait()
-        #print step[0]
-        
+        self.cle.program.Colorize(self.cle.queue, self.shape, None, self.cle.Ix, self.col_cl)
+        cl.enqueue_release_gl_objects(self.cle.queue, self.gl_objects)    
         self.cle.queue.finish()
         
         glFlush()
@@ -143,15 +154,18 @@ class window():
 
         #handle mouse transformations
         glTranslatef(self.initrans.x, self.initrans.y, self.initrans.z)
-        glRotatef(self.rotate.x, 1, 0, 0)
-        glRotatef(self.rotate.y, 0, 1, 0) #we switched around the axis so make this rotate_z
         glTranslatef(self.translate.x, self.translate.y, self.translate.z)
+        glRotatef(self.rotate.x, 1, 0, 0)
+        glRotatef(self.rotate.y, 0, 1, 0)
         
         self.render()
+        
+        if self.capture:
+            glReadPixels(0, 0, self.width, self.height, GL_BGR, GL_UNSIGNED_BYTE, self.pbyData)
+            self.video.write(self.pbyData)
 
-        #draw the x, y and z axis as lines
-        #glutil.draw_axes()
         glutSwapBuffers()
+        
         
         
     def loadVBO(self, X):    

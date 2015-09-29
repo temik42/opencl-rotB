@@ -111,7 +111,7 @@ __kernel void Jacobian(__global float3* X, __global float3* J)
 }
 
 
-__kernel void Force(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* F)
+__kernel void Force(__global float3* X, __global float3* J, __global float3* B, __global float3* F)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -188,13 +188,14 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
         dBx[i] /= (float3)(Det_dX);
     }
     
-    Ix[idx] = (float3)0;
+    F[idx] = (float3)0;
     for (i = 0; i < 3; i++) {
-        Ix[idx] += Cross(dXb[i], dBx[i]);
+        F[idx] += Cross(dXb[i], dBx[i]);
     }
     
-    F[idx] = Cross(Ix[idx], Bx);
+    F[idx] = Cross(F[idx], Bx);
 }
+
 
 
 
@@ -210,7 +211,6 @@ __kernel void Step(__global float3* X, __global float3* F, __global float* param
 
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
-//    if ((iz != 0) && (iz != (nz-1))) {    
     if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
         X[idx] += F[idx]*(float3)(params[0]*coeff);
     }
@@ -231,16 +231,18 @@ __kernel void Update(__global float3* X, __global float3* Y, __global float* par
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
     if (params[1] < 1.f) {
-        X[idx] = Y[idx];   
+        if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
+            X[idx] = Y[idx];   
+        }
     }
     
 }
 
-//__kernel void AdjustParams(__global float* params)
-//{
-//    params[0]/= pow(params[1], 0.1f)+0.5;
-//    params[1] = 0.f;
-//}
+__kernel void AdjustParams(__global float* params)
+{
+    params[0]/= pow(params[1], 0.1f)+0.5;
+    params[1] = 0.f;
+}
 
 __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, __global float* params)
 {
@@ -265,24 +267,3 @@ __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, 
     }  
 }
 
-
-__kernel void Colorize(__global float3* X, __global float4* C)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-    
-    unsigned int nx = get_global_size(0);
-    unsigned int ny = get_global_size(1);
-    unsigned int nz = get_global_size(2);
-
-    unsigned int idx = iz+nz*iy+ny*nz*ix;
-    
-    float absX = sqrt(X[idx].x*X[idx].x + X[idx].y*X[idx].y + X[idx].z*X[idx].z);
-    
-    C[idx].x = absX*10.;
-    C[idx].y = 1.-absX*10.;
-    C[idx].z = 0.;
-    C[idx].w = 1.;
-    
-}

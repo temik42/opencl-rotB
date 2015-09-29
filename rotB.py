@@ -7,7 +7,7 @@ ai = np.array([1./5,
                3./40, 9./40,
                44./45, -56./15, 32./9,
                19372./6561, -25360./2187, 64448./6561, -212./729,
-               9017./3168, -355./33, -46732./5247, 49./176, -5103./18656,
+               9017./3168, -355./33, 46732./5247, 49./176, -5103./18656,
                35./384, 0., 500./1113, 125./192, -2187./6784, 11./84], dtype = np.float32)
 
 bi = np.array([5179./57600, 0, 7571./16695, 393./640, -92097./339200, 187./2100, 1./40], dtype = np.float32)
@@ -17,7 +17,9 @@ class CL(threading.Thread):
         threading.Thread.__init__(self)
         self.clinit(gl_enable)
         self.loadProgram("rotB.cl")
-        self.loadData(X, B, step, scale)
+        
+        self._params = np.array([step, 0, scale], dtype = np.float32)
+        self.loadData(X, B)
         
     def clinit(self, gl_enable):
         plats = cl.get_platforms()
@@ -42,7 +44,7 @@ class CL(threading.Thread):
         self.program = cl.Program(self.ctx, fstr).build()
         
         
-    def loadData(self, X, B, step, scale):
+    def loadData(self, X, B):
         mf = cl.mem_flags
 
         self.shape = X.shape[0:3]
@@ -50,21 +52,27 @@ class CL(threading.Thread):
 
         self.B = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=B)
         self.J = cl.Buffer(self.ctx, mf.READ_WRITE, self.size*3)
+        self.Ix = cl.Buffer(self.ctx, mf.READ_WRITE, self.size)
         self.X = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=X)
         self.ki = [cl.Buffer(self.ctx, mf.READ_WRITE, self.size) for i in range(0,8)]
         
-        params = np.array([step,0.,scale], dtype = np.float32)  
-        self.params = cl.Buffer(self.ctx, mf.READ_WRITE | mf.COPY_HOST_PTR, 12, hostbuf=params)
+        self.params = cl.Buffer(self.ctx, mf.READ_WRITE | mf.COPY_HOST_PTR, 12, hostbuf=self._params)
         
         self.queue.finish()
 
            
-    def rotB(self, X, out):
+    def force(self, X, out):
         self.program.Jacobian(self.queue, self.shape, None, X, self.J)
-        self.program.rotB(self.queue, self.shape, None, X, self.J, self.B, out)
+        self.program.Force(self.queue, self.shape, None, X, self.J, self.B, self.Ix, out)
         self.queue.finish()
-        return out 
 
+        
+    def adjust(self):
+        cl.enqueue_read_buffer(self.queue, self.params, self._params).wait()
+        self._params[0] /= self._params[1]**0.1 + 0.5
+        cl.enqueue_write_buffer(self.queue, self.params, np.array([self._params[0], 0, self._params[2]], dtype = np.float32)).wait()
+        self.queue.finish()
+        
     def run(self):
         while (True):
     
@@ -72,7 +80,7 @@ class CL(threading.Thread):
             self.program.Flush(self.queue, self.shape, None, self.ki[7])
 
             for i in range(0,6):
-                self.rotB(self.ki[0], self.ki[i+1]) ## ki
+                self.force(self.ki[0], self.ki[i+1]) ## ki
 
                 self.program.Step(self.queue, self.shape, None, self.ki[7], self.ki[i+1], self.params, 
                                   np.float32(bi[i]))
@@ -83,8 +91,9 @@ class CL(threading.Thread):
 
             self.program.Error(self.queue, self.shape, None, self.X, self.ki[0], self.ki[7], self.params)
             self.program.Update(self.queue, self.shape, None, self.X, self.ki[0], self.params)
-            self.program.AdjustParams(self.queue, (1,), None, self.params)
-            self.queue.finish()
+            #self.program.AdjustParams(self.queue, (1,), None, self.params)
+            self.adjust()
+            
     
     def get(self):
         X = np.zeros(self.shape + (4,), dtype = np.float32)

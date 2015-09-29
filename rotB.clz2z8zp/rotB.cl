@@ -111,7 +111,7 @@ __kernel void Jacobian(__global float3* X, __global float3* J)
 }
 
 
-__kernel void Force(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* F)
+__kernel void RotB(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* Bx)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -126,7 +126,6 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
     float3 dX[3];
     float3 dXb[3];
     float3 d2X[3][3];
-    float3 Bx;
     float3 dB[3];
     float3 dBx[3];
     float Det_dX;
@@ -141,18 +140,18 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
         
         for (j = 0; j < 3; j++) {
             if (i == j) {
-                Deriv(X, i, 2, F);
-                d2X[i][j] = F[idx];
+                Deriv(X, i, 2, Ix);
+                d2X[i][j] = Ix[idx];
             } else {
-                Deriv(&J[i*nx*ny*nz], j, 1, F);
-                d2X[i][j] = F[idx];
+                Deriv(&J[i*nx*ny*nz], j, 1, Ix);
+                d2X[i][j] = Ix[idx];
             }  
         } 
     }
     
     for (i = 0; i < 3; i++) {
-        Deriv(B, i, 1, F);
-        dB[i] = F[idx];
+        Deriv(B, i, 1, Ix);
+        dB[i] = Ix[idx];
     }
         
     Det_dX = dX[0].x*dX[1].y*dX[2].z + dX[0].y*dX[1].z*dX[2].x + dX[0].z*dX[1].x*dX[2].y - 
@@ -162,11 +161,11 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
     dXb[1] = Cross(dX[2], dX[0])/(float3)(Det_dX);
     dXb[2] = Cross(dX[0], dX[1])/(float3)(Det_dX);
     
-    Bx.x = dX[0].x*B[idx].x + dX[1].x*B[idx].y + dX[2].x*B[idx].z;
-    Bx.y = dX[0].y*B[idx].x + dX[1].y*B[idx].y + dX[2].y*B[idx].z;
-    Bx.z = dX[0].z*B[idx].x + dX[1].z*B[idx].y + dX[2].z*B[idx].z;
+    Bx[idx].x = dX[0].x*B[idx].x + dX[1].x*B[idx].y + dX[2].x*B[idx].z;
+    Bx[idx].y = dX[0].y*B[idx].x + dX[1].y*B[idx].y + dX[2].y*B[idx].z;
+    Bx[idx].z = dX[0].z*B[idx].x + dX[1].z*B[idx].y + dX[2].z*B[idx].z;
     
-    Bx /= (float3)Det_dX;
+    Bx[idx] /= (float3)Det_dX;
     
     for (i = 0; i < 3; i++) {
         dDet_dX[i] = 0.;   
@@ -175,7 +174,7 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
     }
        
     for (i = 0; i < 3; i++) {
-        dBx[i] = -(float3)(dDet_dX[i])*Bx;
+        dBx[i] = -(float3)(dDet_dX[i])*Bx[idx];
 
         dBx[i].x += dX[0].x*dB[i].x + dX[1].x*dB[i].y + dX[2].x*dB[i].z;
         dBx[i].y += dX[0].y*dB[i].x + dX[1].y*dB[i].y + dX[2].y*dB[i].z;
@@ -192,9 +191,29 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
     for (i = 0; i < 3; i++) {
         Ix[idx] += Cross(dXb[i], dBx[i]);
     }
-    
-    F[idx] = Cross(Ix[idx], Bx);
 }
+
+
+
+
+__kernel void Force(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* F)
+{
+    unsigned int ix = get_global_id(0);
+    unsigned int iy = get_global_id(1);
+    unsigned int iz = get_global_id(2);
+    
+    unsigned int nx = get_global_size(0);
+    unsigned int ny = get_global_size(1);
+    unsigned int nz = get_global_size(2);
+
+    unsigned int idx = iz+nz*iy+ny*nz*ix;
+    
+    
+    RotB(X, J, B, Ix, F);
+        
+    F[idx] = Cross(Ix[idx], F[idx]);
+}
+
 
 
 
@@ -210,7 +229,6 @@ __kernel void Step(__global float3* X, __global float3* F, __global float* param
 
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
-//    if ((iz != 0) && (iz != (nz-1))) {    
     if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
         X[idx] += F[idx]*(float3)(params[0]*coeff);
     }
@@ -231,16 +249,18 @@ __kernel void Update(__global float3* X, __global float3* Y, __global float* par
     unsigned int idx = iz+nz*iy+ny*nz*ix;
     
     if (params[1] < 1.f) {
-        X[idx] = Y[idx];   
+        if ((ix != 0) && (ix != (nx-1)) && (iy != 0) && (iy != (ny-1)) && (iz != 0) && (iz != (nz-1))) {
+            X[idx] = Y[idx];   
+        }
     }
     
 }
 
-//__kernel void AdjustParams(__global float* params)
-//{
-//    params[0]/= pow(params[1], 0.1f)+0.5;
-//    params[1] = 0.f;
-//}
+__kernel void AdjustParams(__global float* params)
+{
+    params[0]/= pow(params[1], 0.1f)+0.5;
+    params[1] = 0.f;
+}
 
 __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, __global float* params)
 {
@@ -265,24 +285,3 @@ __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, 
     }  
 }
 
-
-__kernel void Colorize(__global float3* X, __global float4* C)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-    
-    unsigned int nx = get_global_size(0);
-    unsigned int ny = get_global_size(1);
-    unsigned int nz = get_global_size(2);
-
-    unsigned int idx = iz+nz*iy+ny*nz*ix;
-    
-    float absX = sqrt(X[idx].x*X[idx].x + X[idx].y*X[idx].y + X[idx].z*X[idx].z);
-    
-    C[idx].x = absX*10.;
-    C[idx].y = 1.-absX*10.;
-    C[idx].z = 0.;
-    C[idx].w = 1.;
-    
-}
