@@ -14,9 +14,11 @@ import matplotlib.pyplot as plt
 
 import pyopencl as cl
 import rotB
+from datetime import datetime
+
 
 class window():
-    def __init__(self, X, B, step = 0.05, scale = 1e-4, capture = False):
+    def __init__(self, X, B, capture = False, video_dir = ''):
         self.shape = X.shape[0:3]
      
         #mouse handling for transforming scene
@@ -24,15 +26,15 @@ class window():
         self.mouse_old = Vec([0., 0.])
         self.rotate = Vec([0., 0., 0.])
         self.translate = Vec([0., 0., 0.])
-        self.initrans = Vec([0., 0., -self.shape[2]/2])
+        self.initrans = Vec([0., 0., -self.shape[2]])
 
         self.width = 800
         self.height = 800
         
         self.capture = capture
+        self.video_dir = video_dir
         if self.capture:
-            self.video = cv2.VideoWriter('video.avi',-1,30,(self.width,self.height))
-            self.pbyData = np.zeros((self.width,self.height,3), dtype = np.ubyte)
+            self.captureInit()
         
         glutInit(sys.argv)
         glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH)
@@ -55,7 +57,7 @@ class window():
         self.glinit()
         self.loadVBO(X)
         
-        self.cle = rotB.CL(X, B, step = step, scale = scale, gl_enable = True)
+        self.cle = rotB.CL(X, B)
         self.cle.start()
         self.loadData()  
         
@@ -69,7 +71,13 @@ class window():
         gluPerspective(60., self.width / float(self.height), .1, 1000.)
         glMatrixMode(GL_MODELVIEW)
 
-
+    def captureInit(self):
+        systime = datetime.now()
+        hms = str(systime.hour).zfill(2)+str(systime.minute).zfill(2)+str(systime.second).zfill(2)
+        self.fname = self.video_dir+'/video'+hms+'.avi'
+        self.video = cv2.VideoWriter(self.fname,cv2.VideoWriter_fourcc('X','2','6','4'),30,(self.width,self.height))
+        self.pbyData = np.zeros((self.width,self.height,3), dtype = np.ubyte)
+    
     ###GL CALLBACKS
     def timer(self, t):
         glutTimerFunc(t, self.timer, t)
@@ -78,11 +86,18 @@ class window():
     def on_key(self, *args):
         ESCAPE = '\033'
         if args[0] == ESCAPE or args[0] == 'q':
-            sys.exit()
+            self.cle.exit()
+            sys.exit(0)
             
-        if (args[0] == 's') and (self.capture):
-            self.capture = False
-            self.video.release()
+        if args[0] == 's':
+            if self.capture:
+                print 'Stopping video capture'
+                self.capture = False
+                self.video.release()
+            else:
+                self.captureInit()
+                print 'Starting video capture. Saving to '+self.fname
+                self.capture = True
             
         elif args[0] == 't':
             print self.cle.timings
@@ -196,7 +211,7 @@ class window():
             self.col_cl = cl.GLBuffer(self.cle.ctx, mf.READ_WRITE, int(self.col_vbo.buffers[0]))
         self.col_vbo.bind()
 
-        self.cle.queue.finish()
+        #self.cle.queue.finish()
 
         # set up the list of GL objects to share with opencl
         self.gl_objects = [self.X, self.col_cl]

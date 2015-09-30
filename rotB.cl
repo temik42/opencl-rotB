@@ -1,3 +1,11 @@
+
+#define NL %(block_size)d
+#define NX %(nx)d
+#define NY %(ny)d
+#define NZ %(nz)d
+    
+#define Xs(i,j,k) X[k+NZ*j+NY*NZ*i]
+
 float3 Cross(float3 U, float3 V)
 {
     float3 Y;
@@ -10,59 +18,7 @@ float3 Cross(float3 U, float3 V)
 
 
 
-
-__kernel void Deriv(__global float3* X, uchar d, uchar m, __global float3* Y)
-{
-    unsigned int i = get_global_id(0);
-    unsigned int j = get_global_id(1);
-    unsigned int k = get_global_id(2);
-    
-    unsigned int nx = get_global_size(0);
-    unsigned int ny = get_global_size(1);
-    unsigned int nz = get_global_size(2);
-
-    unsigned int idx = k+nz*j+ny*nz*i;
-    
-    unsigned int l;
-    unsigned int n;
-    unsigned int bias;
-    
-    if (d == 0) {
-        n = nx;
-        l = i;
-        bias = ny*nz;
-    }
-    
-    if (d == 1) {
-        n = ny;
-        l = j;
-        bias = nz;
-    }
-    
-    if (d == 2) {
-        n = nz;
-        l = k;
-        bias = 1;
-    }
-
-    if ((l != 0) && (l != (n-1))) {
-        if (m == 1) Y[idx] = X[idx+bias]*(float3)(0.5) - X[idx-bias]*(float3)(0.5);
-        if (m == 2) Y[idx] = X[idx+bias] + X[idx-bias] - (float3)(2)*X[idx];       
-    } else if (l == 0) {
-        if (m == 1) Y[idx] = -(float3)(1.5)*X[idx] + (float3)(2)*X[idx+bias] - (float3)(0.5)*X[idx+2*bias]; 
-        if (m == 2) Y[idx] = (float3)(2)*X[idx] - (float3)(5)*X[idx+bias] + (float3)(4)*X[idx+2*bias] - X[idx+3*bias];
-    } else if (l == (n-1)) {
-        if (m == 1) Y[idx] = (float3)(1.5)*X[idx] - (float3)(2)*X[idx-bias] + (float3)(0.5)*X[idx-2*bias];
-        if (m == 2) Y[idx] = (float3)(2)*X[idx] - (float3)(5)*X[idx-bias] + (float3)(4)*X[idx-2*bias] - X[idx-3*bias];
-    }
-}
-
-__kernel void flush(__global float* X, uchar idx)
-{    
-    X[idx] = (float)(0);    
-}
-
-__kernel void Flush(__global float3* X)
+void Deriv(__global float3* X, uchar d, uchar m, __global float3* Y)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -71,14 +27,84 @@ __kernel void Flush(__global float3* X)
     unsigned int nx = get_global_size(0);
     unsigned int ny = get_global_size(1);
     unsigned int nz = get_global_size(2);
-
+   
     unsigned int idx = iz+nz*iy+ny*nz*ix;
+ 
+    unsigned int lx = get_local_id(0)+1;
+    unsigned int ly = get_local_id(1)+1;
+    unsigned int lz = get_local_id(2)+1;
     
-    X[idx] = (float3)(0);    
+    unsigned int nl = NL+2;
+    
+    unsigned int ldx = lz+nl*ly+nl*nl*lx;
+
+    __local float3 Xl[(NL+2)*(NL+2)*(NL+2)];   
+    Xl[ldx] = X[idx];
+    if ((ix != 0) && (ix != NX-1)) {
+        if (lx == 1) Xl[ldx-nl*nl] = X[idx-ny*nz];
+        if (lx == nl-2) Xl[ldx+nl*nl] = X[idx+ny*nz];
+    }
+    if ((iy != 0) && (iy != NY-1)) {
+        if (ly == 1) Xl[ldx-nl] = X[idx-nz];
+        if (ly == nl-2) Xl[ldx+nl] = X[idx+nz];
+    }
+    if ((iz != 0) && (iz != NZ-1)) {
+        if (lz == 1) Xl[ldx-1] = X[idx-1];
+        if (lz == nl-2) Xl[ldx+1] = X[idx+1];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    
+    unsigned int ii;
+    unsigned int ng;
+    unsigned int ll;
+    unsigned int bg;
+    unsigned int bl;
+    
+    if (d == 0) {
+        ng = nx;
+        ii = ix;
+        bg = ny*nz;
+        ll = lx;
+        bl = nl*nl;
+    }
+    
+    if (d == 1) {
+        ng = ny;
+        ii = iy;
+        bg = nz;
+        ll = ly;
+        bl = nl;
+    }
+    
+    if (d == 2) {
+        ng = nz;
+        ii = iz;
+        bg = 1;
+        ll = lz;
+        bl = 1;
+    }
+    
+    
+        
+    if ((ii != 0) && (ii != (ng-1))) { 
+        if (m == 1) Y[idx] = Xl[ldx+bl]*(float3)(0.5) - Xl[ldx-bl]*(float3)(0.5);
+        if (m == 2) Y[idx] = Xl[ldx+bl] + Xl[ldx-bl] - (float3)(2)*Xl[ldx];              
+    } else if (ii == 0) {
+        if (m == 1) Y[idx] = -(float3)(1.5)*Xl[ldx] + (float3)(2)*Xl[ldx+bl] - (float3)(0.5)*Xl[ldx+2*bl]; 
+        if (m == 2) Y[idx] = (float3)(2)*Xl[ldx] - (float3)(5)*Xl[ldx+bl] + (float3)(4)*Xl[ldx+2*bl] - Xl[ldx+3*bl];
+    } else if (ii == (ng-1)) {
+        if (m == 1) Y[idx] = (float3)(1.5)*Xl[ldx] - (float3)(2)*Xl[ldx-bl] + (float3)(0.5)*Xl[ldx-2*bl];
+        if (m == 2) Y[idx] = (float3)(2)*Xl[ldx] - (float3)(5)*Xl[ldx-bl] + (float3)(4)*Xl[ldx-2*bl] - Xl[ldx-3*bl];           
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
 }
 
 
-__kernel void Copy(__global float3* X, __global float3* Y)
+
+
+__kernel
+void Copy(__global float3* X, __global float3* Y)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -94,24 +120,71 @@ __kernel void Copy(__global float3* X, __global float3* Y)
 }
 
 
-__kernel void Jacobian(__global float3* X, __global float3* J)
-{
+__kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
+void Hessian(__global float3* X)
+{    
+  
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
     unsigned int iz = get_global_id(2);
+
+    //unsigned int idx = iz+nz*iy+ny*nz*ix;
+ 
+    unsigned int lx = get_local_id(0);
+    unsigned int ly = get_local_id(1);
+    unsigned int lz = get_local_id(2);
     
+    unsigned int nl = NL+2;
+    
+    //unsigned int ldx = lz+nl*ly+nl*nl*lx;
+    
+    __local float3 Xl[NL+2][NL+2][NL+2];
+    
+    Xl[lx+1][ly+1][lz+1] = Xs(ix,iy,iz);
+    
+    if ((ix != 0) && (ix != NX-1)) {
+        if (lx == 0) Xl[0][ly+1][lz+1] = Xs(ix-1,iy,iz);
+        if (lx == NL-1) Xl[NL+1][ly+1][lz+1] = Xs(ix+1,iy,iz);
+    }
+    if ((iy != 0) && (iy != NY-1)) {
+        if (ly == 0) Xl[lx+1][0][lz+1] = Xs(ix,iy-1,iz);
+        if (ly == NL-1) Xl[lx+1][NL+1][lz+1] = Xs(ix,iy+1,iz);
+    }
+    if ((iz != 0) && (iz != NZ-1)) {
+        if (lz == 0) Xl[0][ly+1][lz+1] = Xs(ix-1,iy,iz);
+        if (lz == NL-1) Xl[NL+1][ly+1][lz+1] = Xs(ix+1,iy,iz);
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    
+   
+}
+
+
+
+
+
+
+//--------------------------------------------------
+
+__kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
+void Jacobian(__global float3* X, __global float3* J)
+{    
     unsigned int nx = get_global_size(0);
     unsigned int ny = get_global_size(1);
     unsigned int nz = get_global_size(2);
-
-    unsigned int idx = iz+nz*iy+ny*nz*ix;
-    
+ 
     unsigned int i;
     for (i = 0; i < 3; i++) Deriv(X, i, 1, &J[i*nx*ny*nz]);    
 }
 
 
-__kernel void Force(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* F)
+
+
+
+
+
+__kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
+void Force(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* F)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -198,7 +271,8 @@ __kernel void Force(__global float3* X, __global float3* J, __global float3* B, 
 
 
 
-__kernel void Step(__global float3* X, __global float3* F, __global float* params, float coeff)
+__kernel
+void Step(__global float3* X, __global float3* F, __global float* params, float coeff)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -218,7 +292,8 @@ __kernel void Step(__global float3* X, __global float3* F, __global float* param
 
 
 
-__kernel void Update(__global float3* X, __global float3* Y, __global float* params)
+__kernel
+void Update(__global float3* X, __global float3* Y, __global float* params)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -236,13 +311,9 @@ __kernel void Update(__global float3* X, __global float3* Y, __global float* par
     
 }
 
-//__kernel void AdjustParams(__global float* params)
-//{
-//    params[0]/= pow(params[1], 0.1f)+0.5;
-//    params[1] = 0.f;
-//}
 
-__kernel void Error(__global float3* X, __global float3* Y, __global float3* F, __global float* params)
+__kernel
+void Error(__global float3* X, __global float3* Y, __global float* params)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -256,9 +327,9 @@ __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, 
     
     float err;
     
-    err = ((X[idx].x+F[idx].x-Y[idx].x)*(X[idx].x+F[idx].x-Y[idx].x) + 
-                 (X[idx].y+F[idx].y-Y[idx].y)*(X[idx].y+F[idx].y-Y[idx].y) + 
-                 (X[idx].z+F[idx].z-Y[idx].z)*(X[idx].z+F[idx].z-Y[idx].z))/(params[2]*params[2]);
+    err = ((X[idx].x-Y[idx].x)*(X[idx].x-Y[idx].x) + 
+           (X[idx].y-Y[idx].y)*(X[idx].y-Y[idx].y) + 
+           (X[idx].z-Y[idx].z)*(X[idx].z-Y[idx].z))/(params[2]*params[2]);
     
     if (err > params[1]) { 
         params[1] = err;
@@ -266,7 +337,8 @@ __kernel void Error(__global float3* X, __global float3* Y, __global float3* F, 
 }
 
 
-__kernel void Colorize(__global float3* X, __global float4* C)
+__kernel
+void Colorize(__global float3* X, __global float4* C)
 {
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
