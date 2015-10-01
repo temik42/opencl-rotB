@@ -10,7 +10,7 @@ ai = np.array([1./5,
 bi = np.array([5179./57600, 0, 7571./16695, 393./640, -92097./339200, 187./2100, 1./40], dtype = np.float32)
 
 step = 1e-2
-scale = 5e-3
+scale = 1e-2
 block_size = 8
 block_shape = (block_size,block_size,block_size)
 

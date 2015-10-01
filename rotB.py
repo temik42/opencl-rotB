@@ -62,9 +62,6 @@ class CL(threading.Thread):
         
            
     def force(self, X, out):
-        #self.program.Hessian(self.queue, self.shape, block_shape, X)
-        self.program.Jacobian(self.queue, self.shape, block_shape, X, self.J)
-        self.queue.finish()
         self.program.Force(self.queue, self.shape, block_shape, X, self.J, self.B, self.Ix, out)
         self.queue.finish()
 
@@ -96,7 +93,7 @@ class CL(threading.Thread):
 
             self.program.Error(self.queue, self.shape, None, self.ki[0], self.ki[7], self.params)
             self.program.Update(self.queue, self.shape, None, self.X, self.ki[0], self.params)
-            self.adjust()
+            #self.adjust()
             
     
     def get(self):
