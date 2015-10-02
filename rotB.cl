@@ -4,9 +4,18 @@
 #define NY %(ny)d
 #define NZ %(nz)d
     
+#define mm(i,j) (i>j)?i*(i+1)/2+j:j*(j+1)/2+i //"smart" index for hessian matrix
     
-#define mm(i,j) (i>j)?i*(i+1)/2+j:j*(j+1)/2+i
-    
+__constant float ai[21] = {1./5,
+                           3./40, 9./40,
+                           44./45, -56./15, 32./9,
+                           19372./6561, -25360./2187, 64448./6561, -212./729,
+                           9017./3168, -355./33, 46732./5247, 49./176, -5103./18656,
+                           35./384, 0., 500./1113, 125./192, -2187./6784, 11./84};    
+
+__constant float bi[7] = {5179./57600, 0., 7571./16695, 393./640, -92097./339200, 187./2100, 1./40};
+
+
 float3 Cross(float3 U, float3 V)
 {
     float3 Y;
@@ -105,11 +114,10 @@ void Jacobian(__global float3* X, __global float3* J)
 
 
 
-__kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
-void Force(__global float3* X, __global float3* DX, __global float3* Bg, __global float3* DB, __global float3* Ix, __global float3* F)
+//__kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
+float3 force(__local float3* Xl, __global float3* DX, __global float3* Bg, __global float3* DB)
 {
-    __local float3 Xl[(NL+2)*(NL+2)*(NL+2)];
-    __local float3 Yl[(NL+2)*(NL+2)*(NL+2)];
+    __local float3 DXl[(NL+2)*(NL+2)*(NL+2)];
     
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -127,18 +135,7 @@ void Force(__global float3* X, __global float3* DX, __global float3* Bg, __globa
     
     float3 dX[3],dXb[3],d2X[6],B,Bx,dB[3],dBx[3];
     float det_dX,d_det_dX[3];
-    unsigned int i,j,q;
-    
-    
-    //loading position vectors to local memory
-    Xl[ldx] = X[idx];
-    if ((lx == 1) && (ix != 0)) Xl[ldx-nl*nl] = X[idx-NY*NZ];
-    if ((lx == nl-2) && (ix != NX-1)) Xl[ldx+nl*nl] = X[idx+NY*NZ];
-    if ((ly == 1) && (iy != 0)) Xl[ldx-nl] = X[idx-NZ];
-    if ((ly == nl-2) && (iy != NY-1)) Xl[ldx+nl] = X[idx+NZ];
-    if ((lz == 1) && (iz != 0)) Xl[ldx-1] = X[idx-1];
-    if ((lz == nl-2) && (iz != NZ-1)) Xl[ldx+1] = X[idx+1];
-    barrier(CLK_LOCAL_MEM_FENCE); 
+    uchar i,j;
     
     //loading field to private memory
     B = Bg[idx];
@@ -162,18 +159,18 @@ void Force(__global float3* X, __global float3* DX, __global float3* Bg, __globa
         
         //loading Jacobian to local memory
         if (i != 0) {
-            Yl[ldx] = dX[i];
-            if ((lx == 1) && (ix != 0)) Yl[ldx-nl*nl] = DX[idx-NY*NZ + i*NX*NY*NZ];
-            if ((lx == nl-2) && (ix != NX-1)) Yl[ldx+nl*nl] = DX[idx+NY*NZ + i*NX*NY*NZ];
-            if ((ly == 1) && (iy != 0)) Yl[ldx-nl] = DX[idx-NZ + i*NX*NY*NZ];
-            if ((ly == nl-2) && (iy != NY-1)) Yl[ldx+nl] = DX[idx+NZ + i*NX*NY*NZ];
-            if ((lz == 1) && (iz != 0)) Yl[ldx-1] = DX[idx-1 + i*NX*NY*NZ];
-            if ((lz == nl-2) && (iz != NZ-1)) Yl[ldx+1] = DX[idx+1 + i*NX*NY*NZ];
+            DXl[ldx] = dX[i];
+            if ((lx == 1) && (ix != 0)) DXl[ldx-nl*nl] = DX[idx-NY*NZ + i*NX*NY*NZ];
+            if ((lx == nl-2) && (ix != NX-1)) DXl[ldx+nl*nl] = DX[idx+NY*NZ + i*NX*NY*NZ];
+            if ((ly == 1) && (iy != 0)) DXl[ldx-nl] = DX[idx-NZ + i*NX*NY*NZ];
+            if ((ly == nl-2) && (iy != NY-1)) DXl[ldx+nl] = DX[idx+NZ + i*NX*NY*NZ];
+            if ((lz == 1) && (iz != 0)) DXl[ldx-1] = DX[idx-1 + i*NX*NY*NZ];
+            if ((lz == nl-2) && (iz != NZ-1)) DXl[ldx+1] = DX[idx+1 + i*NX*NY*NZ];
             barrier(CLK_LOCAL_MEM_FENCE);
         }
-        //computing cross secong derivatives of X
+        //computing cross-dimentional secong derivatives of X
         //the trick is that border points are processed using the derivatives calculated on the previous iteration
-        for (j = 0; j < i; j++) d2X[i*(i+1)/2+j] = Deriv(Yl, j, 1);
+        for (j = 0; j < i; j++) d2X[i*(i+1)/2+j] = Deriv(DXl, j, 1);
         barrier(CLK_LOCAL_MEM_FENCE);
     }
 
@@ -194,10 +191,7 @@ void Force(__global float3* X, __global float3* DX, __global float3* Bg, __globa
     
     for (i = 0; i < 3; i++) {
         d_det_dX[i] = 0.;   
-        for (j = 0; j < 3; j++) {
-            q = mm(i,j);
-            d_det_dX[i] += d2X[q].x*dXb[j].x + d2X[q].y*dXb[j].y + d2X[q].z*dXb[j].z;
-        }
+        for (j = 0; j < 3; j++) d_det_dX[i] += d2X[mm(i,j)].x*dXb[j].x + d2X[mm(i,j)].y*dXb[j].y + d2X[mm(i,j)].z*dXb[j].z;
         d_det_dX[i] *= det_dX;
     }
        
@@ -215,21 +209,46 @@ void Force(__global float3* X, __global float3* DX, __global float3* Bg, __globa
         dBx[i] /= (float3)(det_dX);
     }
     
-    Ix[idx] = (float3)0;
+    float3 Ix = (float3)0;
     for (i = 0; i < 3; i++) {
-        Ix[idx] += Cross(dXb[i], dBx[i]);
+        Ix += Cross(dXb[i], dBx[i]);
     }
-    
-    F[idx] = Cross(Ix[idx], Bx);
+    return Cross(Ix, Bx);
 }
 
 
+void copy(__global float3* X, __local float3* Xl)
+{
+    unsigned int ix = get_global_id(0);
+    unsigned int iy = get_global_id(1);
+    unsigned int iz = get_global_id(2);
+    
+    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
+ 
+    unsigned int lx = get_local_id(0)+1;
+    unsigned int ly = get_local_id(1)+1;
+    unsigned int lz = get_local_id(2)+1;
+    
+    unsigned int nl = NL+2;
+    unsigned int ldx = lz+nl*ly+nl*nl*lx;
+    
+    Xl[ldx] = X[idx];
+    if ((lx == 1) && (ix != 0)) Xl[ldx-nl*nl] = X[idx-NY*NZ];
+    if ((lx == nl-2) && (ix != NX-1)) Xl[ldx+nl*nl] = X[idx+NY*NZ];
+    if ((ly == 1) && (iy != 0)) Xl[ldx-nl] = X[idx-NZ];
+    if ((ly == nl-2) && (iy != NY-1)) Xl[ldx+nl] = X[idx+NZ];
+    if ((lz == 1) && (iz != 0)) Xl[ldx-1] = X[idx-1];
+    if ((lz == nl-2) && (iz != NZ-1)) Xl[ldx+1] = X[idx+1];
+    barrier(CLK_LOCAL_MEM_FENCE);
+}
+
 
 __kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
-void Dopr(__global float3* X, __global float3* J, __global float3* B, __global float3* Ix, __global float3* F)
-{
+void Dopr(__global float3* X, __global float3* DX, __global float3* B, __global float3* DB, float step, float scale)
+{       
     __local float3 Xl[(NL+2)*(NL+2)*(NL+2)];
     __local float3 Yl[(NL+2)*(NL+2)*(NL+2)];
+    float3 ki[7];
     
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -244,6 +263,31 @@ void Dopr(__global float3* X, __global float3* J, __global float3* B, __global f
     unsigned int nl = NL+2;
     unsigned int ldx = lz+nl*ly+nl*nl*lx;
     
+    bool not_border = ((ix != 0) && (ix != (NX-1)) && (iy != 0) && (iy != (NY-1)) && (iz != 0) && (iz != (NZ-1)));
+    
+    copy(X,Yl);
+    ki[6] = Yl[ldx];
+    
+    uchar i,j;
+    
+    for (i = 0; i < 6; i++) {
+        copy(X,Xl);
+        ki[i] = force(Xl, DX, B, DB)*step;
+        ki[6] += ki[i]*bi[i];
+        
+        X[idx] = Yl[ldx];
+        for (j = 0; j <= i; j++) 
+            if (not_border) 
+            X[idx] += ai[mm(i,j)]*ki[j];
+        //barrier(CLK_GLOBAL_MEM_FENCE);
+    } 
+    
+    float err;
+    float3 x = X[idx];
+    
+    err = ((x.x-ki[6].x)*(x.x-ki[6].x) + 
+           (x.y-ki[6].y)*(x.y-ki[6].y) + 
+           (x.z-ki[6].z)*(x.z-ki[6].z))/(scale*scale);
     
 }
 
