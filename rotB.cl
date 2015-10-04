@@ -1,10 +1,13 @@
-
+#define SCALE %(scale)f
 #define NL %(block_size)d
 #define NX %(nx)d
 #define NY %(ny)d
 #define NZ %(nz)d
+#define MX %(mx)d
+#define MY %(my)d
+#define MZ %(mz)d
     
-#define mm(i,j) (i>j)?i*(i+1)/2+j:j*(j+1)/2+i //"smart" index for hessian matrix
+#define mm(i,j) (i>j)?i*(i+1)/2+j:j*(j+1)/2+i //"smart" index for triagngular matrices
     
 __constant float ai[21] = {1./5,
                            3./40, 9./40,
@@ -13,7 +16,7 @@ __constant float ai[21] = {1./5,
                            9017./3168, -355./33, 46732./5247, 49./176, -5103./18656,
                            35./384, 0., 500./1113, 125./192, -2187./6784, 11./84};    
 
-__constant float bi[7] = {5179./57600, 0., 7571./16695, 393./640, -92097./339200, 187./2100, 1./40};
+__constant float bi[7] = {5179./57600, 0., 7571./16695, 393./640, -92097./339200, 187./2100};
 
 
 float3 Cross(float3 U, float3 V)
@@ -64,18 +67,6 @@ float3 Deriv(__local float3* Xl, uchar dim, uchar order)
 
 
 
-
-__kernel
-void Copy(__global float3* X, __global float3* Y)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-
-    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
-    
-    Y[idx] = X[idx];    
-}
 
 
 __kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
@@ -141,21 +132,22 @@ float3 force(__local float3* Xl, __global float3* DX, __global float3* Bg, __glo
     B = Bg[idx];
     
     //computing first and second derivatives of X
-    //for (i = 0; i < 3; i++) {
-    //    dX[i] = Deriv(Xl, i, 1);
-    //    d2X[i][i] = Deriv(Xl, i, 2);
-    //    J[idx + i*NX*NY*NZ] = dX[i];
-    //}
-    //barrier(CLK_LOCAL_MEM_FENCE);
-    //barrier(CLK_GLOBAL_MEM_FENCE);
-
     for (i = 0; i < 3; i++) {
         dB[i] = DB[idx + i*NX*NY*NZ];
-        
-        //computing first and second derivatives of X
         dX[i] = Deriv(Xl, i, 1);
         d2X[i*(i+3)/2] = Deriv(Xl, i, 2);
         DX[idx + i*NX*NY*NZ] = dX[i];
+    }
+    //barrier(CLK_LOCAL_MEM_FENCE);
+    barrier(CLK_GLOBAL_MEM_FENCE);
+
+    for (i = 0; i < 3; i++) {
+        
+        
+        //computing first and second derivatives of X
+        //dX[i] = Deriv(Xl, i, 1);
+        //d2X[i*(i+3)/2] = Deriv(Xl, i, 2);
+        //DX[idx + i*NX*NY*NZ] = dX[i];
         
         //loading Jacobian to local memory
         if (i != 0) {
@@ -217,38 +209,15 @@ float3 force(__local float3* Xl, __global float3* DX, __global float3* Bg, __glo
 }
 
 
-void copy(__global float3* X, __local float3* Xl)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-    
-    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
- 
-    unsigned int lx = get_local_id(0)+1;
-    unsigned int ly = get_local_id(1)+1;
-    unsigned int lz = get_local_id(2)+1;
-    
-    unsigned int nl = NL+2;
-    unsigned int ldx = lz+nl*ly+nl*nl*lx;
-    
-    Xl[ldx] = X[idx];
-    if ((lx == 1) && (ix != 0)) Xl[ldx-nl*nl] = X[idx-NY*NZ];
-    if ((lx == nl-2) && (ix != NX-1)) Xl[ldx+nl*nl] = X[idx+NY*NZ];
-    if ((ly == 1) && (iy != 0)) Xl[ldx-nl] = X[idx-NZ];
-    if ((ly == nl-2) && (iy != NY-1)) Xl[ldx+nl] = X[idx+NZ];
-    if ((lz == 1) && (iz != 0)) Xl[ldx-1] = X[idx-1];
-    if ((lz == nl-2) && (iz != NZ-1)) Xl[ldx+1] = X[idx+1];
-    barrier(CLK_LOCAL_MEM_FENCE);
-}
-
 
 __kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
-void Dopr(__global float3* X, __global float3* DX, __global float3* B, __global float3* DB, float step, float scale)
+void Dopr(__global float3* X, __global float3* DX, __global float3* B, __global float3* DB, float step, __global float* Error)
 {       
     __local float3 Xl[(NL+2)*(NL+2)*(NL+2)];
     __local float3 Yl[(NL+2)*(NL+2)*(NL+2)];
-    float3 ki[7];
+    //__local float error[(NL+2)*(NL+2)*(NL+2)];
+    
+    float3 ki[8];
     
     unsigned int ix = get_global_id(0);
     unsigned int iy = get_global_id(1);
@@ -263,92 +232,50 @@ void Dopr(__global float3* X, __global float3* DX, __global float3* B, __global 
     unsigned int nl = NL+2;
     unsigned int ldx = lz+nl*ly+nl*nl*lx;
     
+    unsigned int gx = get_group_id(0);
+    unsigned int gy = get_group_id(1);
+    unsigned int gz = get_group_id(2);
+    
+    unsigned int gdx = gz+MZ*gy+MY*MZ*gx;
+    
     bool not_border = ((ix != 0) && (ix != (NX-1)) && (iy != 0) && (iy != (NY-1)) && (iz != 0) && (iz != (NZ-1)));
     
-    copy(X,Yl);
+    Yl[ldx] = X[idx];
+    if ((lx == 1) && (ix != 0)) Yl[ldx-nl*nl] = X[idx-NY*NZ];
+    if ((lx == nl-2) && (ix != NX-1)) Yl[ldx+nl*nl] = X[idx+NY*NZ];
+    if ((ly == 1) && (iy != 0)) Yl[ldx-nl] = X[idx-NZ];
+    if ((ly == nl-2) && (iy != NY-1)) Yl[ldx+nl] = X[idx+NZ];
+    if ((lz == 1) && (iz != 0)) Yl[ldx-1] = X[idx-1];
+    if ((lz == nl-2) && (iz != NZ-1)) Yl[ldx+1] = X[idx+1];
+    barrier(CLK_LOCAL_MEM_FENCE);
+    
     ki[6] = Yl[ldx];
     
     uchar i,j;
     
     for (i = 0; i < 6; i++) {
-        copy(X,Xl);
-        ki[i] = force(Xl, DX, B, DB)*step;
-        ki[6] += ki[i]*bi[i];
+        Xl[ldx] = X[idx];
+        if ((lx == 1) && (ix != 0)) Xl[ldx-nl*nl] = X[idx-NY*NZ];
+        if ((lx == nl-2) && (ix != NX-1)) Xl[ldx+nl*nl] = X[idx+NY*NZ];
+        if ((ly == 1) && (iy != 0)) Xl[ldx-nl] = X[idx-NZ];
+        if ((ly == nl-2) && (iy != NY-1)) Xl[ldx+nl] = X[idx+NZ];
+        if ((lz == 1) && (iz != 0)) Xl[ldx-1] = X[idx-1];
+        if ((lz == nl-2) && (iz != NZ-1)) Xl[ldx+1] = X[idx+1];
+        barrier(CLK_LOCAL_MEM_FENCE);
         
-        X[idx] = Yl[ldx];
+        ki[i] = force(Xl, DX, B, DB)*step;
+        if (not_border) ki[6] += ki[i]*bi[i];
+        
+        ki[7] = Yl[ldx];
         for (j = 0; j <= i; j++) 
-            if (not_border) 
-            X[idx] += ai[mm(i,j)]*ki[j];
-        //barrier(CLK_GLOBAL_MEM_FENCE);
+            if (not_border) ki[7] += ai[mm(i,j)]*ki[j];
+        X[idx] = ki[7];
+        barrier(CLK_GLOBAL_MEM_FENCE);
     } 
-    
-    float err;
-    float3 x = X[idx];
-    
-    err = ((x.x-ki[6].x)*(x.x-ki[6].x) + 
-           (x.y-ki[6].y)*(x.y-ki[6].y) + 
-           (x.z-ki[6].z)*(x.z-ki[6].z))/(scale*scale);
-    
+
+    Error[idx] = (pow(ki[6].x-ki[7].x,2.f)+pow(ki[6].y-ki[7].y,2.f)+pow(ki[6].z-ki[7].z,2.f))/(SCALE*SCALE);
+    barrier(CLK_GLOBAL_MEM_FENCE);
 }
-
-
-
-
-__kernel
-void Step(__global float3* X, __global float3* F, __global float* params, float coeff)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-
-    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
-    
-//    if ((iz != 0) && (iz != (nz-1))) {    
-    if ((ix != 0) && (ix != (NX-1)) && (iy != 0) && (iy != (NY-1)) && (iz != 0) && (iz != (NZ-1))) {
-        X[idx] += F[idx]*(float3)(params[0]*coeff);
-    }
-}
-
-
-
-__kernel
-void Update(__global float3* X, __global float3* Y, __global float* params)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-
-    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
-    
-    if (params[1] < 1.f) {
-        X[idx] = Y[idx];   
-    }
-    
-}
-
-
-__kernel
-void Error(__global float3* X, __global float3* Y, __global float* params)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-
-    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
-    
-    float err;
-    
-    err = ((X[idx].x-Y[idx].x)*(X[idx].x-Y[idx].x) + 
-           (X[idx].y-Y[idx].y)*(X[idx].y-Y[idx].y) + 
-           (X[idx].z-Y[idx].z)*(X[idx].z-Y[idx].z))/(params[2]*params[2]);
-    
-    if (err > params[1]) { 
-        params[1] = err;
-    }  
-}
-
-
-
 
 
 

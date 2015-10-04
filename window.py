@@ -9,17 +9,13 @@ import numpy as np
 #helper modules
 import glutil
 from vector import Vec
-
-import matplotlib.pyplot as plt
-
-import pyopencl as cl
-import rotB
 from datetime import datetime
 
 
 class window():
-    def __init__(self, X, B, capture = False, video_dir = ''):
-        self.shape = X.shape[0:3]
+    def __init__(self, cle, capture = False, video_dir = ''):
+        self.cle = cle
+        self.shape = cle._X.shape[0:3]
      
         #mouse handling for transforming scene
         self.mouse_down = False
@@ -55,12 +51,7 @@ class window():
 
         #setup OpenGL scene
         self.glinit()
-        self.loadVBO(X)
-        
-        self.cle = rotB.CL(X, B)
-        self.cle.start()
-        self.loadData()  
-        
+        self.loadVBO(self.cle._X)
         glutMainLoop()
 
     
@@ -98,9 +89,6 @@ class window():
                 self.captureInit()
                 print 'Starting video capture. Saving to '+self.fname
                 self.capture = True
-            
-        elif args[0] == 't':
-            print self.cle.timings
 
     def on_click(self, button, state, x, y):
         if state == GLUT_DOWN:
@@ -152,14 +140,11 @@ class window():
 
         glDisable(GL_BLEND)
         
-    def draw(self):
-        """Render the particles"""        
+    def draw(self):      
+        
+        self.pos_vbo.set_array(self.cle._X)
+        self.pos_vbo.bind()
 
-        cl.enqueue_acquire_gl_objects(self.cle.queue, self.gl_objects)
-        self.cle.program.Copy(self.cle.queue, self.shape, None, self.cle.X, self.X)
-        self.cle.program.Colorize(self.cle.queue, self.shape, None, self.cle.Ix, self.col_cl)
-        cl.enqueue_release_gl_objects(self.cle.queue, self.gl_objects)    
-        self.cle.queue.finish()
         
         glFlush()
 
@@ -197,21 +182,3 @@ class window():
         self.col_vbo = vbo.VBO(data=col, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
         self.col_vbo.bind()
         return self
-
-    def loadData(self):
-        mf = cl.mem_flags
-        
-        self.pos_vbo.bind()
-
-        try:
-            self.X = cl.GLBuffer(self.cle.ctx, mf.READ_WRITE, int(self.pos_vbo.buffer))
-            self.col_cl = cl.GLBuffer(self.cle.ctx, mf.READ_WRITE, int(self.col_vbo.buffer))
-        except AttributeError:
-            self.X = cl.GLBuffer(self.cle.ctx, mf.READ_WRITE, int(self.pos_vbo.buffers[0]))
-            self.col_cl = cl.GLBuffer(self.cle.ctx, mf.READ_WRITE, int(self.col_vbo.buffers[0]))
-        self.col_vbo.bind()
-
-        #self.cle.queue.finish()
-
-        # set up the list of GL objects to share with opencl
-        self.gl_objects = [self.X, self.col_cl]
