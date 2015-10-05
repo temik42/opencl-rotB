@@ -53,7 +53,6 @@ class CL(threading.Thread):
         self.size = X.nbytes
         
         self.X = cl.Buffer(self.ctx, mf.READ_WRITE | mf.COPY_HOST_PTR, hostbuf=X)
-        self.DX = cl.Buffer(self.ctx, mf.READ_WRITE, self.size*3)
         self.B = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=B)
         self.DB = cl.Buffer(self.ctx, mf.READ_WRITE, self.size*3)  
         self.Ix = cl.Buffer(self.ctx, mf.READ_WRITE, self.size)
@@ -67,13 +66,17 @@ class CL(threading.Thread):
         self.program.Jacobian(self.queue, self.shape, block_shape, self.B, self.DB)
         
         while (True):
-            self.program.Dopr(self.queue, self.shape, block_shape, self.X, self.DX, self.B, self.DB, np.float32(self.step), self.Error)
+            self.program.Dopr(self.queue, self.shape, block_shape, self.X, self.B, self.DB, np.float32(self.step), self.Error)
             cl.enqueue_read_buffer(self.queue, self.Error, self._Error).wait()           
             error = np.max(self._Error)
-            self.step /= error**0.1+0.5
-            if (error < 1):
-                cl.enqueue_read_buffer(self.queue, self.X, self._X)
+            if (not np.isnan(error)):
+                self.step /= error**0.1+0.5
+                if (error < 1):
+                    cl.enqueue_read_buffer(self.queue, self.X, self._X).wait()
+                else:
+                    cl.enqueue_copy(self.queue, self.X, self._X)
             else:
+                self.step /= 2
                 cl.enqueue_copy(self.queue, self.X, self._X)
             
             self.queue.finish()
