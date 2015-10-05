@@ -19,6 +19,16 @@ __constant float ai[21] = {1./5,
 
 __constant float bi[7] = {5179./57600, 0., 7571./16695, 393./640, -92097./339200, 187./2100};
 
+__constant unsigned int ng[3] = {NX,NY,NZ};
+__constant unsigned int bg[3] = {NY*NZ,NZ,1};
+__constant unsigned int bl[3] = {NL*NL,NL,1};
+
+
+struct rb_str {
+    float3 force;
+    float3 current;
+};
+
 
 float3 Cross(float3 U, float3 V)
 {
@@ -34,9 +44,7 @@ float3 Cross(float3 U, float3 V)
 
 float3 Deriv(__local float3* Xl, unsigned int ldx, uchar dim, uchar order)
 {  
-    unsigned int ng[3] = {NX,NY,NZ};
     unsigned int ii[3] = {get_global_id(0),get_global_id(1),get_global_id(2)};
-    unsigned int bl[3] = {NL*NL,NL,1};
        
     float3 out;
       
@@ -55,23 +63,18 @@ float3 Deriv(__local float3* Xl, unsigned int ldx, uchar dim, uchar order)
 
 
 
-
-
 __kernel __attribute__((reqd_work_group_size(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE)))
 void Jacobian(__global float3* X, __global float3* J)
 {
     __local float3 Xl[NL*NL*NL];
     
-    unsigned int ng[3] = {NX,NY,NZ};
-    unsigned int bg[3] = {NY*NZ,NZ,1};
     unsigned int ii[3] = {get_global_id(0),get_global_id(1),get_global_id(2)};
     unsigned int idx = ii[0]*bg[0]+ii[1]*bg[1]+ii[2]*bg[2];
     
-    unsigned int bl[3] = {NL*NL,NL,1};
     unsigned int ll[3] = {get_local_id(0)+1,get_local_id(1)+1,get_local_id(2)+1};
     unsigned int ldx = ll[0]*bl[0]+ll[1]*bl[1]+ll[2]*bl[2];
     
-    unsigned int i;
+    uchar i;
     
     Xl[ldx] = X[idx];
     
@@ -85,17 +88,13 @@ void Jacobian(__global float3* X, __global float3* J)
 
 
 
-
-//__kernel __attribute__((reqd_work_group_size(NL,NL,NL)))
-float3 force(__local float3* Xl, __global float3* Bg, __global float3* DB)
+struct rb_str rotB(__local float3* Xl, __global float3* Bg, __global float3* DB)
 {
     __local float3 DXl[NL*NL*NL];
     
-    unsigned int bg[3] = {NY*NZ,NZ,1};
     unsigned int ii[3] = {get_global_id(0),get_global_id(1),get_global_id(2)};
     unsigned int idx = ii[0]*bg[0]+ii[1]*bg[1]+ii[2]*bg[2];
     
-    unsigned int bl[3] = {NL*NL,NL,1};
     unsigned int ll[3] = {get_local_id(0)+1,get_local_id(1)+1,get_local_id(2)+1};
     unsigned int ldx = ll[0]*bl[0]+ll[1]*bl[1]+ll[2]*bl[2];
     
@@ -108,25 +107,25 @@ float3 force(__local float3* Xl, __global float3* Bg, __global float3* DB)
 
     for (i = 0; i < 3; i++) {
 
-        //computing first and second derivatives of X
         dB[i] = DB[idx + i*NX*NY*NZ];
+        
+        //computing first and second derivatives of X
         d2X[i*(i+3)/2] = Deriv(Xl, ldx, i, 2);
         dX[i] = Deriv(Xl, ldx, i, 1);
         
         //loading Jacobian to local memory
         if (i != 0) DXl[ldx] = dX[i];
-        barrier(CLK_LOCAL_MEM_FENCE);
+        
         //computing cross-dimentional secong derivatives of X
-        //the trick is that border points are processed using the derivatives calculated on the previous iteration
         for (j = 0; j < i; j++) {
             if (ll[j] == 1) DXl[ldx-bl[j]] = Deriv(Xl, ldx-bl[j], i, 1);
             if (ll[j] == NL-2) DXl[ldx+bl[j]] = Deriv(Xl, ldx+bl[j], i, 1);
+            barrier(CLK_LOCAL_MEM_FENCE);
             d2X[i*(i+1)/2+j] = Deriv(DXl, ldx, j, 1);
         }
-        //barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    //the rest of code uses only private memory
+    //-----------------------------the rest of code uses only private memory-------------------------------------
     
     det_dX = dX[0].x*dX[1].y*dX[2].z + dX[0].y*dX[1].z*dX[2].x + dX[0].z*dX[1].x*dX[2].y - 
            dX[0].x*dX[1].z*dX[2].y - dX[0].y*dX[1].x*dX[2].z - dX[0].z*dX[1].y*dX[2].x;
@@ -161,29 +160,29 @@ float3 force(__local float3* Xl, __global float3* Bg, __global float3* DB)
         dBx[i] /= (float3)(det_dX);
     }
     
-    float3 Ix = (float3)0;
+    struct rb_str out;
+    out.current = (float3)0;
     for (i = 0; i < 3; i++) {
-        Ix += Cross(dXb[i], dBx[i]);
+        out.current += Cross(dXb[i], dBx[i]);
     }
-    return Cross(Ix, Bx);
+    out.force = Cross(out.current, Bx);
+    
+    return out;
 }
 
 
 
 __kernel __attribute__((reqd_work_group_size(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE)))
-void Dopr(__global float3* X, __global float3* B, __global float3* DB, float step, __global float* Error)
+void Dopr(__global float3* X, __global float3* B, __global float3* DB, float step, __global float* Error, __global float4* Color)
 {       
     __local float3 Xl[NL*NL*NL];
     __local float3 Yl[NL*NL*NL];
     
     float3 ki[8];
     
-    unsigned int ng[3] = {NX,NY,NZ};
-    unsigned int bg[3] = {NY*NZ,NZ,1};
     unsigned int ii[3] = {get_global_id(0),get_global_id(1),get_global_id(2)};
     unsigned int idx = ii[0]*bg[0]+ii[1]*bg[1]+ii[2]*bg[2];
     
-    unsigned int bl[3] = {NL*NL,NL,1};
     unsigned int ll[3] = {get_local_id(0)+1,get_local_id(1)+1,get_local_id(2)+1};
     unsigned int ldx = ll[0]*bl[0]+ll[1]*bl[1]+ll[2]*bl[2];
 
@@ -192,61 +191,45 @@ void Dopr(__global float3* X, __global float3* B, __global float3* DB, float ste
     bool not_border = true;
     for (i = 0; i < 3; i++) not_border = not_border && (ii[i] != 0) && (ii[i] != ng[i]-1);
     
-    Yl[ldx] = X[idx];
+    Yl[ldx] = X[idx]; 
     
     for (i = 0; i < 3; i++) {
-        if ((ll[i] == 1) && (ii[i] != 0)) Xl[ldx-bl[i]] = X[idx-bg[i]];
-        if ((ll[i] == NL-2) && (ii[i] != ng[i]-1)) Xl[ldx+bl[i]] = X[idx+bg[i]];
-    }
-    
-    for (i = 0; i < 3; i++) 
+        if ((ll[i] == 2) && (ii[i] != 1)) Xl[ldx-2*bl[i]] = X[idx-2*bg[i]];
+        if ((ll[i] == NL-3) && (ii[i] != ng[i]-2)) Xl[ldx+2*bl[i]] = X[idx+2*bg[i]];
         for (j = 0; j < i; j++) {
             if ((ll[i] == 1) && (ll[j] == 1) && (ii[i] != 0) && (ii[j] != 0)) Xl[ldx-bl[i]-bl[j]] = X[idx-bg[i]-bg[j]];
             if ((ll[i] == 1) && (ll[j] == NL-2) && (ii[i] != 0) && (ii[j] != ng[j]-1)) Xl[ldx-bl[i]+bl[j]] = X[idx-bg[i]+bg[j]];
             if ((ll[i] == NL-2) && (ll[j] == 1) && (ii[i] != ng[i]-1) && (ii[j] != 0)) Xl[ldx+bl[i]-bl[j]] = X[idx+bg[i]-bg[j]];
             if ((ll[i] == NL-2) && (ll[j] == NL-2) && (ii[i] != ng[i]-1) && (ii[j] != ng[j]-1)) Xl[ldx+bl[i]+bl[j]] = X[idx+bg[i]+bg[j]];
         }
-    
+    }
     barrier(CLK_LOCAL_MEM_FENCE);    
     
     ki[6] = Yl[ldx];
     ki[7] = Yl[ldx];
     
+    struct rb_str temp;
     
     for (i = 0; i < 6; i++) {
         Xl[ldx] = ki[7];
-
         barrier(CLK_LOCAL_MEM_FENCE);
         
-        ki[i] = force(Xl, B, DB)*step;
+        temp = rotB(Xl, B, DB);
+        ki[i] = temp.force*step;
         if (not_border) ki[6] += ki[i]*bi[i];
         
         ki[7] = Yl[ldx];
         for (j = 0; j <= i; j++) 
             if (not_border) ki[7] += ai[mm(i,j)]*ki[j];
-        //barrier(CLK_GLOBAL_MEM_FENCE);
     } 
     X[idx] = ki[7];
     Error[idx] = (pow(ki[6].x-ki[7].x,2.f)+pow(ki[6].y-ki[7].y,2.f)+pow(ki[6].z-ki[7].z,2.f))/(SCALE*SCALE);
-    barrier(CLK_GLOBAL_MEM_FENCE);
+    
+    float absC = sqrt(pow(temp.current.x,2.f)+pow(temp.current.y,2.f)+pow(temp.current.z,2.f));
+    
+    Color[idx].x = absC*10.f;
+    Color[idx].y = 1.f-absC*10.f;
+    Color[idx].z = 0.f;
+    Color[idx].w = 1.f;
 }
 
-
-
-__kernel
-void Colorize(__global float3* X, __global float4* C)
-{
-    unsigned int ix = get_global_id(0);
-    unsigned int iy = get_global_id(1);
-    unsigned int iz = get_global_id(2);
-
-    unsigned int idx = iz+NZ*iy+NY*NZ*ix;
-    
-    float absX = sqrt(X[idx].x*X[idx].x + X[idx].y*X[idx].y + X[idx].z*X[idx].z);
-    
-    C[idx].x = absX*10.;
-    C[idx].y = 1.-absX*10.;
-    C[idx].z = 0.;
-    C[idx].w = 1.;
-    
-}

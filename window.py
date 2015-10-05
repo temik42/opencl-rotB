@@ -126,11 +126,7 @@ class window():
 
         glEnableClientState(GL_VERTEX_ARRAY)
         glEnableClientState(GL_COLOR_ARRAY)
-        #draw the VBOs
-        #for i in range(self.shape[0]/4,self.shape[0]/4*3, 4):
-        #    for j in range(self.shape[1]/4,self.shape[1]/4*3, 4):
-        #        glDrawArrays(GL_LINE_STRIP, i*self.shape[1]*self.shape[2] + j*self.shape[2], self.shape[2])
-                
+  
         for i in range(0,self.shape[0], 4):
             for j in range(0,self.shape[1], 4):
                 glDrawArrays(GL_LINE_STRIP, i*self.shape[1]*self.shape[2] + j*self.shape[2], self.shape[2])
@@ -145,6 +141,8 @@ class window():
         self.pos_vbo.set_array(self.cle._X)
         self.pos_vbo.bind()
 
+        self.col_vbo.set_array(self.cle._Color)
+        self.col_vbo.bind()
         
         glFlush()
 
