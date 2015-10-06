@@ -173,7 +173,7 @@ struct rb_str rotB(__local float3* Xl, __global float3* Bg, __global float3* DB)
 
 
 __kernel __attribute__((reqd_work_group_size(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE)))
-void Dopr(__global float3* X, __global float3* B, __global float3* DB, float step, __global float* Error, __global float4* Color)
+void Dopr(__global float3* X, __global float3* B, __global float3* DB, float step, __global float* Error, __global float3* Current)
 {       
     __local float3 Xl[NL*NL*NL];
     __local float3 Yl[NL*NL*NL];
@@ -190,8 +190,11 @@ void Dopr(__global float3* X, __global float3* B, __global float3* DB, float ste
     
     bool not_border = true;
     for (i = 0; i < 3; i++) not_border = not_border && (ii[i] != 0) && (ii[i] != ng[i]-1);
+    //not_border = (ii[2] != 0) && (ii[2] != ng[2]-1);
+    
     
     Yl[ldx] = X[idx]; 
+    
     
     for (i = 0; i < 3; i++) {
         if ((ll[i] == 2) && (ii[i] != 1)) Xl[ldx-2*bl[i]] = X[idx-2*bg[i]];
@@ -222,14 +225,9 @@ void Dopr(__global float3* X, __global float3* B, __global float3* DB, float ste
         for (j = 0; j <= i; j++) 
             if (not_border) ki[7] += ai[mm(i,j)]*ki[j];
     } 
+    
     X[idx] = ki[7];
     Error[idx] = (pow(ki[6].x-ki[7].x,2.f)+pow(ki[6].y-ki[7].y,2.f)+pow(ki[6].z-ki[7].z,2.f))/(SCALE*SCALE);
-    
-    float absC = sqrt(pow(temp.current.x,2.f)+pow(temp.current.y,2.f)+pow(temp.current.z,2.f));
-    
-    Color[idx].x = absC*10.f;
-    Color[idx].y = 1.f-absC*10.f;
-    Color[idx].z = 0.f;
-    Color[idx].w = 1.f;
+    Current[idx] = temp.current;
 }
 

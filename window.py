@@ -140,8 +140,12 @@ class window():
         
         self.pos_vbo.set_array(self.cle._X)
         self.pos_vbo.bind()
-
-        self.col_vbo.set_array(self.cle._Color)
+        
+        red = 10*np.sqrt(np.sum(self.cle._Current[:,:,:,0:3]**2, axis = 3))
+        self.Color[:,:,:,0] = red
+        self.Color[:,:,:,1] = 1-red
+        
+        self.col_vbo.set_array(self.Color)
         self.col_vbo.bind()
         
         glFlush()
@@ -167,16 +171,16 @@ class window():
         
         
     def loadVBO(self, X):    
-        col = np.zeros_like(X)
-        col[:,:,:,0] = 0.
-        col[:,:,:,1] = 1.
-        col[:,:,:,2] = 0.
-        col[:,:,:,3] = 1.
+        self.Color = np.zeros_like(X)
+        self.Color[:,:,:,0] = 0.
+        self.Color[:,:,:,1] = 1.
+        self.Color[:,:,:,2] = 0.
+        self.Color[:,:,:,3] = 1.
 
         #create the Vertex Buffer Objects
         from OpenGL.arrays import vbo 
         self.pos_vbo = vbo.VBO(data=X, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
         self.pos_vbo.bind()
-        self.col_vbo = vbo.VBO(data=col, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
+        self.col_vbo = vbo.VBO(data=self.Color, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
         self.col_vbo.bind()
         return self
