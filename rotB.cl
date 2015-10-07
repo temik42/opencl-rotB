@@ -106,7 +106,6 @@ struct rb_str rotB(__local float3* Xl, __global float3* Bg, __global float3* DB)
     B = Bg[idx];
 
     for (i = 0; i < 3; i++) {
-
         dB[i] = DB[idx + i*NX*NY*NZ];
         
         //computing first and second derivatives of X
@@ -173,12 +172,9 @@ struct rb_str rotB(__local float3* Xl, __global float3* Bg, __global float3* DB)
 
 
 __kernel __attribute__((reqd_work_group_size(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE)))
-void Dopr(__global float3* X, __global float3* B, __global float3* DB, float step, __global float* Error, __global float3* Current)
+void Dopr(__global float3* X, __global float3* X1, __global float3* B, __global float3* DB, float step, __global float* Error, __global float3* Current)
 {       
     __local float3 Xl[NL*NL*NL];
-    __local float3 Yl[NL*NL*NL];
-    
-    float3 ki[8];
     
     unsigned int ii[3] = {get_global_id(0),get_global_id(1),get_global_id(2)};
     unsigned int idx = ii[0]*bg[0]+ii[1]*bg[1]+ii[2]*bg[2];
@@ -192,10 +188,7 @@ void Dopr(__global float3* X, __global float3* B, __global float3* DB, float ste
     for (i = 0; i < 3; i++) not_border = not_border && (ii[i] != 0) && (ii[i] != ng[i]-1);
     //not_border = (ii[2] != 0) && (ii[2] != ng[2]-1);
     
-    
-    Yl[ldx] = X[idx]; 
-    
-    
+    Xl[ldx] = X[idx];
     for (i = 0; i < 3; i++) {
         if ((ll[i] == 2) && (ii[i] != 1)) Xl[ldx-2*bl[i]] = X[idx-2*bg[i]];
         if ((ll[i] == NL-3) && (ii[i] != ng[i]-2)) Xl[ldx+2*bl[i]] = X[idx+2*bg[i]];
@@ -206,27 +199,27 @@ void Dopr(__global float3* X, __global float3* B, __global float3* DB, float ste
             if ((ll[i] == NL-2) && (ll[j] == NL-2) && (ii[i] != ng[i]-1) && (ii[j] != ng[j]-1)) Xl[ldx+bl[i]+bl[j]] = X[idx+bg[i]+bg[j]];
         }
     }
-    barrier(CLK_LOCAL_MEM_FENCE);    
+    barrier(CLK_LOCAL_MEM_FENCE);
     
-    ki[6] = Yl[ldx];
-    ki[7] = Yl[ldx];
+    float3 Xp = X[idx];
+    float3 ki[8];
+    ki[6] = Xp;
     
     struct rb_str temp;
     
-    for (i = 0; i < 6; i++) {
-        Xl[ldx] = ki[7];
-        barrier(CLK_LOCAL_MEM_FENCE);
-        
+    for (i = 0; i < 6; i++) {     
         temp = rotB(Xl, B, DB);
         ki[i] = temp.force*step;
         if (not_border) ki[6] += ki[i]*bi[i];
         
-        ki[7] = Yl[ldx];
+        ki[7] = Xp;
         for (j = 0; j <= i; j++) 
             if (not_border) ki[7] += ai[mm(i,j)]*ki[j];
+        Xl[ldx] = ki[7];
+        barrier(CLK_LOCAL_MEM_FENCE);  
     } 
     
-    X[idx] = ki[7];
+    X1[idx] = ki[7];
     Error[idx] = (pow(ki[6].x-ki[7].x,2.f)+pow(ki[6].y-ki[7].y,2.f)+pow(ki[6].z-ki[7].z,2.f))/(SCALE*SCALE);
     Current[idx] = temp.current;
 }

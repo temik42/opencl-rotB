@@ -51,7 +51,7 @@ class window():
 
         #setup OpenGL scene
         self.glinit()
-        self.loadVBO(self.cle._X)
+        self.loadVBO()
         glutMainLoop()
 
     
@@ -141,7 +141,7 @@ class window():
         self.pos_vbo.set_array(self.cle._X)
         self.pos_vbo.bind()
         
-        red = 10*np.sqrt(np.sum(self.cle._Current[:,:,:,0:3]**2, axis = 3))
+        red = 5*np.sqrt(np.sum(self.cle._Current[:,:,:,0:3]**2, axis = 3))/self.CNorm
         self.Color[:,:,:,0] = red
         self.Color[:,:,:,1] = 1-red
         
@@ -170,16 +170,16 @@ class window():
         
         
         
-    def loadVBO(self, X):    
-        self.Color = np.zeros_like(X)
+    def loadVBO(self):    
+        self.Color = np.zeros_like(self.cle._X)
         self.Color[:,:,:,0] = 0.
         self.Color[:,:,:,1] = 1.
         self.Color[:,:,:,2] = 0.
         self.Color[:,:,:,3] = 1.
-
+        self.CNorm = np.sqrt(np.sum(self.cle._B[:,:,:,0:3]**2, axis = 3))
         #create the Vertex Buffer Objects
         from OpenGL.arrays import vbo 
-        self.pos_vbo = vbo.VBO(data=X, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
+        self.pos_vbo = vbo.VBO(data=self.cle._X, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
         self.pos_vbo.bind()
         self.col_vbo = vbo.VBO(data=self.Color, usage=GL_DYNAMIC_DRAW, target=GL_ARRAY_BUFFER)
         self.col_vbo.bind()

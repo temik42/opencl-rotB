@@ -48,12 +48,14 @@ class CL(threading.Thread):
         
     def loadData(self, X, B):
         self._X = X
+        self._B = B
         self._Error = np.zeros(self.shape, dtype = np.float32)
         self._Current = np.zeros(self.shape+(4,), dtype = np.float32)
         mf = cl.mem_flags
         self.size = X.nbytes
         
         self.X = cl.Buffer(self.ctx, mf.READ_WRITE | mf.COPY_HOST_PTR, hostbuf=X)
+        self.X1 = cl.Buffer(self.ctx, mf.READ_WRITE | mf.COPY_HOST_PTR, hostbuf=X)
         self.B = cl.Buffer(self.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=B)
         self.DB = cl.Buffer(self.ctx, mf.READ_WRITE, self.size*3)  
         self.Current = cl.Buffer(self.ctx, mf.READ_WRITE, self.size)
@@ -68,20 +70,19 @@ class CL(threading.Thread):
         
         while (True):
             self.program.Dopr(self.queue, self.shape, block_shape, 
-                              self.X, self.B, self.DB, np.float32(self.step), self.Error, self.Current)
-            cl.enqueue_read_buffer(self.queue, self.Error, self._Error).wait()           
+                              self.X, self.X1, self.B, self.DB, np.float32(self.step), self.Error, self.Current)
+            cl.enqueue_barrier(self.queue)
+            cl.enqueue_read_buffer(self.queue, self.Error, self._Error)       
             error = np.max(self._Error)
             if (not np.isnan(error)):
                 cl.enqueue_read_buffer(self.queue, self.Current, self._Current)
                 self.step /= error**0.1+0.5
                 if (error < 1):
-                    cl.enqueue_read_buffer(self.queue, self.X, self._X).wait()
-                else:
-                    cl.enqueue_copy(self.queue, self.X, self._X).wait()
+                    cl.enqueue_copy(self.queue, self.X, self.X1)
+                    cl.enqueue_read_buffer(self.queue, self.X1, self._X)
             else:
                 self.step /= 2
-                cl.enqueue_copy(self.queue, self.X, self._X).wait()
-            
+
             self.queue.finish()
             
 
