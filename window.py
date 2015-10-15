@@ -22,7 +22,7 @@ class window():
         self.mouse_old = Vec([0., 0.])
         self.rotate = Vec([0., 0., 0.])
         self.translate = Vec([0., 0., 0.])
-        self.initrans = Vec([0., 0., -self.shape[2]])
+        self.initrans = Vec([0., 0., -1.25*self.shape[2]])
 
         self.width = 800
         self.height = 800
@@ -77,6 +77,8 @@ class window():
     def on_key(self, *args):
         ESCAPE = '\033'
         if args[0] == ESCAPE or args[0] == 'q':
+            self.capture = False
+            self.video.release()
             self.cle.exit()
             sys.exit(0)
             

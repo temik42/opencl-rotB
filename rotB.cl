@@ -4,9 +4,6 @@
 #define NX %(nx)d
 #define NY %(ny)d
 #define NZ %(nz)d
-#define MX %(mx)d
-#define MY %(my)d
-#define MZ %(mz)d
     
 #define mm(i,j) (i>j)?i*(i+1)/2+j:j*(j+1)/2+i //"smart" index for triagngular matrices
     
@@ -165,6 +162,9 @@ struct rb_str rotB(__local float3* Xl, __global float3* Bg, __global float3* DB)
         out.current += Cross(dXb[i], dBx[i]);
     }
     out.force = Cross(out.current, Bx);
+    //out.force.x = d_det_dX[0]/(det_dX*det_dX);
+    //out.force.y = d_det_dX[1]/(det_dX*det_dX);
+    //out.force.z = d_det_dX[2]/(det_dX*det_dX);
     
     return out;
 }
@@ -172,7 +172,7 @@ struct rb_str rotB(__local float3* Xl, __global float3* Bg, __global float3* DB)
 
 
 __kernel __attribute__((reqd_work_group_size(BLOCK_SIZE,BLOCK_SIZE,BLOCK_SIZE)))
-void Dopr(__global float3* X, __global float3* X1, __global float3* B, __global float3* DB, float step, __global float* Error, __global float3* Current)
+void Integrate(__global float3* X, __global float3* X1, __global float3* B, __global float3* DB, float step, __global float* Error, __global float3* Current)
 {       
     __local float3 Xl[NL*NL*NL];
     
@@ -184,9 +184,10 @@ void Dopr(__global float3* X, __global float3* X1, __global float3* B, __global 
 
     uchar i,j;
     
-    bool not_border = true;
-    for (i = 0; i < 3; i++) not_border = not_border && (ii[i] != 0) && (ii[i] != ng[i]-1);
-    //not_border = (ii[2] != 0) && (ii[2] != ng[2]-1);
+    bool border = false;
+    for (i = 0; i < 3; i++) border = border || (ii[i] == 0) || (ii[i] == ng[i]-1);
+    //bool layer_1 = (ii[2] == 1) || (ii[2] == ng[2]-2);
+    
     
     Xl[ldx] = X[idx];
     for (i = 0; i < 3; i++) {
@@ -210,11 +211,12 @@ void Dopr(__global float3* X, __global float3* X1, __global float3* B, __global 
     for (i = 0; i < 6; i++) {     
         temp = rotB(Xl, B, DB);
         ki[i] = temp.force*step;
-        if (not_border) ki[6] += ki[i]*bi[i];
+        //if (layer_1) ki[i].z = (float)0.;
+        if (!border) ki[6] += ki[i]*bi[i];
         
         ki[7] = Xp;
         for (j = 0; j <= i; j++) 
-            if (not_border) ki[7] += ai[mm(i,j)]*ki[j];
+            if (!border) ki[7] += ai[mm(i,j)]*ki[j];
         Xl[ldx] = ki[7];
         barrier(CLK_LOCAL_MEM_FENCE);  
     } 
